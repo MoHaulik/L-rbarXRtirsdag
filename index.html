@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LærbarXR — 360° Scenario Builder</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    /* --- Reset / Base --- */
+    *{margin:0;padding:0;box-sizing:border-box}
+    :root{
+      --bg:#ffffff;
+      --text:#0f172a;          /* slate-900 */
+      --muted:#64748b;         /* slate-500 */
+      --border:#e5e7eb;        /* gray-200 */
+      --line:#e5e7eb;          /* grid/edges base */
+      --ring:#6366f1;          /* indigo-500 */
+      --purple:#a78bfa;        /* purple-400 */
+      --green:#16a34a;         /* green-600 */
+      --red:#ef4444;           /* red-500 */
+      --chip:#f1f5f9;          /* slate-100 */
+      --panel:#ffffff;
+      --panel-alt:#f8fafc;     /* slate-50 */
+    }
+    body{
+      font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      height:100vh; overflow:hidden;
+    }
+
+    /* --- Layout --- */
+    .main-container{display:flex;height:100vh}
+    .sidebar{
+      width:420px;background:var(--panel);
+      border-right:1px solid var(--border);
+      padding:20px;overflow-y:auto
+    }
+    .canvas-container{flex:1;position:relative;overflow:hidden}
+    .flow-canvas{
+      width:100%;height:100%;position:relative;background:var(--bg);
+      cursor:grab
+    }
+    .grid-overlay{
+      position:absolute;inset:0;opacity:.7;pointer-events:none;
+      background-image:
+        linear-gradient(var(--line) 1px,transparent 1px),
+        linear-gradient(90deg,var(--line) 1px,transparent 1px);
+      background-size:50px 50px;
+    }
+
+    /* --- Legend --- */
+    .legend{
+      position:absolute;right:12px;top:12px;background:var(--panel);
+      border:1px solid var(--border);border-radius:10px;padding:8px 10px;
+      font-size:11px;z-index:5;box-shadow:0 1px 2px rgba(0,0,0,.04)
+    }
+    .legend div{display:flex;align-items:center;gap:8px;margin:3px 0}
+    .line-chip{width:26px;height:0;border-top:3px solid var(--line)}
+    .line-chip.purple-dash{border-top:3px dashed var(--purple)}
+    .line-chip.green{border-top:3px solid var(--green)}
+    .line-chip.red{border-top:3px solid var(--red)}
+    .line-chip.red-dot{border-top:3px dotted var(--red)}
+
+    /* --- Nodes (circular) --- */
+    .flow-node{
+      position:absolute;width:170px;height:170px;min-width:170px;min-height:170px;
+      border-radius:9999px;border:2px solid var(--border);
+      background:var(--panel-alt);
+      box-shadow:0 4px 16px rgba(15,23,42,.06);
+      cursor:move;transition:.2s;overflow:hidden
+    }
+    .flow-node:hover{transform:translateY(-1px)}
+    .flow-node.selected{border-color:var(--ring);box-shadow:0 0 0 3px rgba(99,102,241,.18),0 8px 24px rgba(15,23,42,.08)}
+    .flow-node .thumb{
+      position:absolute;inset:0;background-size:cover;background-position:center;
+      filter:saturate(1);opacity:.96;
+    }
+    .flow-node .scrim{
+      position:absolute;inset:0;background:linear-gradient(to top, rgba(0,0,0,.45), rgba(0,0,0,.0) 60%);
+      pointer-events:none;
+    }
+    .node-label{
+      position:absolute;left:50%;bottom:10px;transform:translateX(-50%);
+      background:rgba(255,255,255,.9);backdrop-filter:saturate(1.2);
+      border:1px solid var(--border);border-radius:999px;
+      padding:4px 10px;font-size:12px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;text-align:center
+    }
+    .start-badge{
+      position:absolute;top:8px;left:8px;
+      background:#e0f2fe;border:1px solid #bae6fd;color:#075985;font-weight:600;
+      border-radius:999px;padding:2px 8px;font-size:10px
+    }
+    .type-chip{
+      position:absolute;top:8px;right:8px;font-size:11px;
+      background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.25);
+      color:#3730a3;border-radius:999px;padding:2px 8px
+    }
+    .choice-node .type-chip{background:rgba(168,85,247,.12);border-color:rgba(168,85,247,.25);color:#6b21a8}
+    .end-node .type-chip{background:rgba(15,23,42,.08);border-color:var(--border);color:#0f172a}
+
+    /* --- Connections --- */
+    .connection-line{position:absolute;pointer-events:none;z-index:1}
+    .connection-path{fill:none;stroke:var(--line);stroke-width:3;filter:none}
+    .connection-path.green{stroke:var(--green)}
+    .connection-path.red{stroke:var(--red)}
+    .connection-path.purple{stroke:var(--purple);stroke-dasharray:8 6}
+    .connection-path.red-dot{stroke:var(--red);stroke-dasharray:3 6}
+    .connection-label{
+      position:absolute;background:#111827;color:#ffffff;border:1px solid rgba(255,255,255,.12);
+      padding:4px 8px;border-radius:12px;font-size:11px;pointer-events:none;z-index:2;opacity:.9
+    }
+
+    /* --- Buttons/Inputs --- */
+    .tool-btn{
+      background:#ffffff;border:1px solid var(--border);border-radius:8px;
+      padding:8px 12px;color:var(--text);cursor:pointer;font-size:12px;
+      box-shadow:0 1px 2px rgba(0,0,0,.03)
+    }
+    .tool-btn:disabled{opacity:.6;cursor:not-allowed}
+    .property-group{
+      background:var(--panel);border:1px solid var(--border);
+      border-radius:10px;padding:15px;margin-bottom:15px
+    }
+    .property-group h3{font-size:14px;margin-bottom:10px}
+    .property-group label{display:block;margin:8px 0 4px;font-size:12px;color:var(--muted)}
+    .property-group input,.property-group textarea,.property-group select{
+      width:100%;background:var(--panel);border:1px solid var(--border);
+      border-radius:6px;padding:8px;color:var(--text);font-size:12px
+    }
+    .node-list{max-height:220px;overflow-y:auto}
+    .node-list-item{
+      background:var(--panel);border:1px solid var(--border);
+      border-radius:8px;padding:8px;margin-bottom:8px;cursor:pointer;font-size:12px
+    }
+    .node-list-item.selected{outline:2px solid rgba(99,102,241,.35);background:#fafafa}
+    .asset-row{
+      display:flex;align-items:center;justify-content:space-between;
+      background:var(--panel);border:1px solid var(--border);
+      border-radius:8px;padding:8px;margin:4px 0;font-size:11px
+    }
+    .badge{display:inline-block;border-radius:999px;padding:2px 8px;font-size:10px;background:var(--chip)}
+    .tiny{font-size:10px;opacity:.8}
+    .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+    .chip{font-size:10px;padding:4px 8px;border-radius:999px;background:var(--chip);border:1px solid var(--border)}
+
+    /* --- Add node floating button --- */
+    .add-node-btn{
+      position:absolute;bottom:30px;right:30px;width:56px;height:56px;border-radius:999px;
+      background:linear-gradient(145deg,#818cf8,#a78bfa);border:none;color:#fff;font-size:24px;cursor:pointer;
+      box-shadow:0 10px 24px rgba(129,140,248,.35)
+    }
+
+    /* --- Modals --- */
+    .validation-modal,.player-modal,.progress-modal{position:fixed;inset:0;background:rgba(2,6,23,.55);display:none;align-items:center;justify-content:center;z-index:1000}
+    .validation-content,.player-content,.progress-content{background:#ffffff;border:1px solid var(--border);border-radius:16px;padding:24px;max-width:860px;max-height:88vh;overflow:auto;color:var(--text)}
+    .validation-error{background:#fef2f2;border:1px solid #fecaca;padding:12px;margin:8px 0;border-radius:8px;font-size:12px}
+    .player-video{width:100%;max-height:60vh;background:#000;border-radius:12px}
+    .choice-overlay{margin-top:12px;display:none;background:#f8fafc;border:1px solid var(--border);padding:12px;border-radius:12px}
+    .choice-option{display:inline-block;background:#ffffff;border:1px solid var(--border);padding:8px 12px;margin:6px;border-radius:10px;cursor:pointer}
+    .qa-images{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .qa-images img{width:100px;height:75px;object-fit:cover;border-radius:8px;border:1px solid var(--border)}
+    .progress-bar{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden}
+    .progress-bar > div{height:100%;width:0;background:#818cf8}
+  </style>
+</head>
+<body>
+  <div class="main-container">
+    <div class="sidebar">
+      <h2 style="margin-bottom:12px">LærbarXR</h2>
+
+      <div class="property-group">
+        <h3>Project</h3>
+        <label>Title</label>
+        <input id="project-title" value="My Scenario" onchange="updateProjectTitle(this.value)"/>
+        <label>Start Node (must be Video)</label>
+        <select id="start-node-select" onchange="updateStartNode(this.value)">
+          <option value="">Select start node...</option>
+        </select>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="tool-btn" onclick="openPlayer()">Player Preview</button>
+          <button class="tool-btn" onclick="saveProject()">Save</button>
+          <button class="tool-btn" onclick="loadProject()">Load</button>
+        </div>
+      </div>
+
+      <div class="property-group">
+        <h3>Add Nodes</h3>
+        <button class="tool-btn" onclick="addVideoNode()" style="width:100%;margin-bottom:8px">Video</button>
+        <button class="tool-btn" onclick="addChoiceNode()" style="width:100%;margin-bottom:8px">Question</button>
+        <button class="tool-btn" onclick="addEndNode()" style="width:100%">End</button>
+      </div>
+
+      <div class="property-group">
+        <h3>Assets</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <input type="file" id="asset-picker-video" style="display:none" accept="video/mp4" multiple onchange="handleVideoFiles(this.files)"/>
+          <button class="tool-btn" onclick="document.getElementById('asset-picker-video').click()">+ Add MP4(s)</button>
+          <input type="file" id="asset-picker-image" style="display:none" accept="image/jpeg" multiple onchange="handleImageFiles(this.files)"/>
+          <button class="tool-btn" onclick="document.getElementById('asset-picker-image').click()">+ Add JPEG(s)</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin:6px 0">Videos</div>
+        <div id="asset-list-video"></div>
+        <div style="font-size:11px;color:var(--muted);margin:10px 0 6px">Images (for Questions)</div>
+        <div id="asset-list-image"></div>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+          Files are exported as-is (no recompression) inside <code>assets/</code>.
+        </div>
+      </div>
+
+      <div class="property-group">
+        <h3>Node Properties</h3>
+        <div id="node-properties"><p style="opacity:.7;font-size:12px">Select a node to edit</p></div>
+      </div>
+
+      <div class="property-group">
+        <h3>Flow</h3>
+        <div class="node-list" id="node-list"></div>
+      </div>
+
+      <div class="property-group">
+        <h3>Export</h3>
+        <button id="export-btn" class="tool-btn" style="width:100%;margin-bottom:8px" onclick="validateAndExport()">Export ZIP</button>
+        <button class="tool-btn" style="width:100%" onclick="debugProject()">Debug</button>
+        <div id="export-hint" style="margin-top:8px;font-size:11px;color:var(--muted)"></div>
+      </div>
+    </div>
+
+    <div class="canvas-container">
+      <div class="flow-canvas" id="flowCanvas">
+        <div class="grid-overlay"></div>
+        <div class="legend">
+          <div><span class="line-chip purple-dash"></span> Video → Question (cue)</div>
+          <div><span class="line-chip green"></span> Question (correct) → Next</div>
+          <div><span class="line-chip red"></span> Question (incorrect) → Consequence</div>
+          <div><span class="line-chip red-dot"></span> Consequence → return to Question</div>
+        </div>
+      </div>
+      <button class="add-node-btn" title="Add a random node" onclick="addQuickNode()">+</button>
+    </div>
+  </div>
+
+  <!-- Validation Modal -->
+  <div class="validation-modal" id="validationModal">
+    <div class="validation-content">
+      <h2 style="color:#b91c1c;margin-bottom:12px">Validation Errors</h2>
+      <div id="validation-errors"></div>
+      <div style="text-align:center;margin-top:16px">
+        <button class="tool-btn" onclick="closeValidationModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Player Preview Modal -->
+  <div class="player-modal" id="playerModal">
+    <div class="player-content">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 id="playerTitle">Player Preview</h3>
+        <button class="tool-btn" onclick="closePlayer()">Close</button>
+      </div>
+      <video id="playerVideo" class="player-video" controls playsinline></video>
+      <div id="playerInfo" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
+      <div id="choiceOverlay" class="choice-overlay"></div>
+    </div>
+  </div>
+
+  <!-- Progress Modal -->
+  <div class="progress-modal" id="progressModal">
+    <div class="progress-content">
+      <h3>Packaging ZIP…</h3>
+      <div class="progress-bar" style="margin:12px 0"><div id="progressFill"></div></div>
+      <div id="progressText" style="font-size:12px;opacity:.8">Starting…</div>
+    </div>
+  </div>
+
+  <!-- Hidden project loader -->
+  <input type="file" id="project-loader" accept=".flow" style="display:none" onchange="handleProjectLoad(event)"/>
+
+  <script>
+    // ---------- Utilities ----------
+    const KB=1024, MB=1024*KB, GB=1024*MB;
+
+    function generateId(prefix='id'){
+      return prefix+'_'+Math.random().toString(36).slice(2,8)+Date.now().toString(36);
+    }
+    function sanitizeFilename(name){
+      const cleaned = name.replace(/[\\/:"*?<>|]+/g,'').replace(/\s+/g,'_');
+      return cleaned || ('file_'+Date.now());
+    }
+    function fmtBytes(b){
+      if(b>=GB) return (b/GB).toFixed(2)+' GB';
+      if(b>=MB) return (b/MB).toFixed(1)+' MB';
+      if(b>=KB) return (b/KB).toFixed(0)+' KB';
+      return b+' B';
+    }
+
+    // ---------- Project State ----------
+    let project = {
+      schemaVersion:"2.2",
+      scenarioId: generateId('scenario'),
+      title:"My Scenario",
+      startNodeId:null,
+      nodes:[],
+      edges:[], // correct options → next node
+      videoAssets:[], // {id, filename, mime, size, file, objectURL, thumbnail?}
+      imageAssets:[]  // {id, filename, mime, size, file, objectURL}
+    };
+
+    let selectedNode=null, isDragging=false, dragOffset={x:0,y:0};
+
+    // ---------- Init ----------
+    window.addEventListener('load',()=>{
+      const start = addVideoNode(120,100,"Intro Video");
+      project.startNodeId = start.id;
+      const q = addChoiceNode(460,120,"Intro Question");
+      start.cuePoints.push({id:generateId('cue'), tSeconds:5, choiceNodeId:q.id});
+      updateStartNodeSelect();
+      updateDisplay();
+
+      document.getElementById('flowCanvas').addEventListener('click',e=>{
+        if(e.target.id==='flowCanvas' || e.target.classList.contains('grid-overlay')){
+          document.querySelectorAll('.flow-node.selected').forEach(el=>el.classList.remove('selected'));
+          selectedNode=null; updateNodeProperties(); updateNodeList();
+        }
+      });
+
+      // Delete key removes selected node
+      window.addEventListener('keydown',(e)=>{
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        const editing = ['input','textarea','select'].includes(tag);
+        if((e.key==='Delete' || (e.key==='Backspace' && !editing)) && selectedNode){
+          e.preventDefault(); deleteSelectedNode();
+        }
+      });
+
+      // Auto re-check export validity
+      setInterval(()=>{
+        const errs=validateProject();
+        const btn=document.getElementById('export-btn');
+        if(errs.length){ btn.disabled=true; btn.textContent=`Export (${errs.length} errors)`; }
+        else{ btn.disabled=false; btn.textContent='Export ZIP'; }
+      },900);
+    });
+
+    // ---------- Node CRUD ----------
+    function addVideoNode(x=300,y=200,title="New Video"){
+      const node = { id:generateId('video'), type:'video', x,y, title, assetId:null, duration:30, cuePoints:[] };
+      project.nodes.push(node); createNodeElement(node); updateAllLists(); return node;
+    }
+    function addChoiceNode(x=520,y=260,title="Question"){
+      const node = {
+        id:generateId('choice'), type:'choice', x,y, title,
+        question:"Describe your assessment and choose the next step.",
+        images:[],
+        options:[
+          {id:generateId('option'), label:'Option 1', isCorrect:false, consequenceVideoId:null, spatial:{yaw:-30,pitch:0}},
+          {id:generateId('option'), label:'Option 2', isCorrect:true,  consequenceVideoId:null, spatial:{yaw:30,pitch:0}}
+        ]
+      };
+      project.nodes.push(node); createNodeElement(node); updateAllLists(); return node;
+    }
+    function addEndNode(x=700,y=360,title="End"){
+      const node = { id:generateId('end'), type:'end', x,y, title, outcomeTag:'completed' };
+      project.nodes.push(node); createNodeElement(node); updateAllLists(); return node;
+    }
+    function addQuickNode(){
+      const types=['video','choice','end']; const t=types[Math.floor(Math.random()*types.length)];
+      if(t==='video') addVideoNode(200+Math.random()*400,150+Math.random()*260,"Video");
+      else if(t==='choice') addChoiceNode(200+Math.random()*400,150+Math.random()*260,"Question");
+      else addEndNode(200+Math.random()*400,150+Math.random()*260,"End");
+    }
+
+    function deleteSelectedNode(){
+      if(!selectedNode) return;
+      const id = selectedNode.id;
+      // Remove edges to/from this node
+      project.edges = project.edges.filter(e=>e.fromNodeId!==id && e.toNodeId!==id);
+      // Remove cue links that target this (if it's a choice)
+      project.nodes.filter(n=>n.type==='video').forEach(v=>{
+        v.cuePoints.forEach(c=>{ if(c.choiceNodeId===id) c.choiceNodeId=null; });
+      });
+      // If deleting a video, clear any consequence links pointing to it
+      if(selectedNode.type==='video'){
+        project.nodes.filter(n=>n.type==='choice').forEach(ch=>{
+          ch.options.forEach(o=>{ if(o.consequenceVideoId===id) o.consequenceVideoId=null; });
+        });
+      }
+      // Clear start node if needed
+      if(project.startNodeId===id) project.startNodeId=null;
+
+      // Remove the node
+      project.nodes = project.nodes.filter(n=>n.id!==id);
+      const el=document.querySelector(`[data-node-id="${id}"]`); if(el) el.remove();
+      selectedNode=null; updateDisplay(); updateNodeProperties();
+    }
+
+    // ---------- Canvas Node Elements (circular) ----------
+    function createNodeElement(node){
+      const canvas=document.getElementById('flowCanvas');
+      const nodeEl=document.createElement('div');
+      nodeEl.className=`flow-node ${node.type}-node`;
+      nodeEl.style.left=node.x+'px'; nodeEl.style.top=node.y+'px';
+      nodeEl.dataset.nodeId=node.id;
+
+      // Thumbnail (for video nodes with asset)
+      let thumbStyle='';
+      if(node.type==='video' && node.assetId){
+        const asset=project.videoAssets.find(a=>a.id===node.assetId);
+        if(asset){ ensureVideoThumbnail(asset.id).then(()=>updateNodeElement(node)); if(asset.thumbnail) thumbStyle=`style="background-image:url('${asset.thumbnail}')"`}
+      }
+
+      const typeLabel = node.type==='video'?'Video':node.type==='choice'?'Question':'End';
+      const startBadge = project.startNodeId===node.id ? `<span class="start-badge">START</span>`:'';
+
+      nodeEl.innerHTML=`
+        <div class="thumb" ${thumbStyle}></div>
+        <div class="scrim"></div>
+        ${startBadge}
+        <div class="type-chip">${typeLabel}</div>
+        <div class="node-label" title="${node.title}">${node.title}</div>
+      `;
+
+      nodeEl.addEventListener('mousedown',startDrag);
+      nodeEl.addEventListener('click',selectNode);
+
+      canvas.appendChild(nodeEl);
+    }
+
+    function startDrag(e){
+      e.stopPropagation(); isDragging=true;
+      const nodeEl=e.target.closest('.flow-node'); const r=nodeEl.getBoundingClientRect();
+      dragOffset.x=e.clientX-r.left; dragOffset.y=e.clientY-r.top;
+      document.addEventListener('mousemove',dragNode); document.addEventListener('mouseup',stopDrag);
+      document.querySelectorAll('.flow-node.selected').forEach(el=>el.classList.remove('selected'));
+      nodeEl.classList.add('selected');
+      selectedNode=project.nodes.find(n=>n.id===nodeEl.dataset.nodeId);
+      updateNodeProperties(); updateNodeList();
+    }
+    function dragNode(e){
+      if(!isDragging) return;
+      const canvas=document.getElementById('flowCanvas'); const cr=canvas.getBoundingClientRect();
+      const x=Math.max(0,e.clientX-cr.left-dragOffset.x); const y=Math.max(0,e.clientY-cr.top-dragOffset.y);
+      const nodeEl=document.querySelector('.flow-node.selected'); if(!nodeEl) return;
+      nodeEl.style.left=x+'px'; nodeEl.style.top=y+'px';
+      const node=project.nodes.find(n=>n.id===nodeEl.dataset.nodeId); if(node){node.x=x; node.y=y;} updateConnections();
+    }
+    function stopDrag(){ isDragging=false; document.removeEventListener('mousemove',dragNode); document.removeEventListener('mouseup',stopDrag); }
+
+    function selectNode(e){
+      e.stopPropagation();
+      const nodeEl=e.target.closest('.flow-node');
+      document.querySelectorAll('.flow-node.selected').forEach(el=>el.classList.remove('selected'));
+      nodeEl.classList.add('selected');
+      selectedNode=project.nodes.find(n=>n.id===nodeEl.dataset.nodeId);
+      updateNodeProperties(); updateNodeList();
+    }
+
+    function updateNodeElement(node){
+      const old=document.querySelector(`[data-node-id="${node.id}"]`);
+      if(!old) return;
+      const canvas=document.getElementById('flowCanvas');
+      canvas.removeChild(old);
+      createNodeElement(node);
+      if(selectedNode && selectedNode.id===node.id){ document.querySelector(`[data-node-id="${node.id}"]`).classList.add('selected'); }
+      updateConnections();
+    }
+
+    // ---------- Connections (draw) ----------
+    function updateConnections(){
+      document.querySelectorAll('.connection-line,.connection-label').forEach(el=>el.remove());
+      const canvas=document.getElementById('flowCanvas');
+
+      // 1) Video cue → Question (purple dashed)
+      project.nodes.filter(n=>n.type==='video').forEach(v=>{
+        const vEl=document.querySelector(`[data-node-id="${v.id}"]`);
+        v.cuePoints.forEach(cp=>{
+          if(!cp.choiceNodeId) return;
+          const qEl=document.querySelector(`[data-node-id="${cp.choiceNodeId}"]`);
+          if(vEl&&qEl) drawConnection(vEl,qEl,{style:'purple', label:`Cue @ ${cp.tSeconds}s`});
+        });
+      });
+
+      // 2) Correct edges (green solid)
+      project.edges.forEach(edge=>{
+        const fromEl=document.querySelector(`[data-node-id="${edge.fromNodeId}"]`);
+        const toEl=document.querySelector(`[data-node-id="${edge.toNodeId}"]`);
+        if(fromEl&&toEl){
+          const choice=project.nodes.find(n=>n.id===edge.fromNodeId);
+          const opt=choice?.options?.find(o=>o.id===edge.viaOptionId);
+          drawConnection(fromEl,toEl,{style:'green', label: opt?`✔ ${opt.label}`:'✔'});
+        }
+      });
+
+      // 3) Incorrect → consequence (red solid) + return (red dotted)
+      project.nodes.filter(n=>n.type==='choice').forEach(ch=>{
+        const chEl=document.querySelector(`[data-node-id="${ch.id}"]`);
+        ch.options.filter(o=>!o.isCorrect && o.consequenceVideoId).forEach(o=>{
+          const vEl=document.querySelector(`[data-node-id="${o.consequenceVideoId}"]`);
+          if(chEl&&vEl){
+            drawConnection(chEl,vEl,{style:'red', label:`✖ ${o.label}`});
+            drawConnection(vEl,chEl,{style:'red-dot', label:'return'});
+          }
+        });
+      });
+
+      function centerPoint(el){
+        const cr=canvas.getBoundingClientRect();
+        const r=el.getBoundingClientRect();
+        return {x:r.left-cr.left+r.width/2, y:r.top-cr.top+r.height/2};
+      }
+      function drawConnection(fromEl,toEl,{style,label}){
+        const from=centerPoint(fromEl), to=centerPoint(toEl);
+        const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+        Object.assign(svg.style,{position:'absolute',inset:'0',pointerEvents:'none',zIndex:1}); svg.classList.add('connection-line');
+        const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+        const midX=(from.x+to.x)/2, c1=from.x+(midX-from.x)*.5, c2=to.x-(to.x-midX)*.5;
+        path.setAttribute('d',`M ${from.x} ${from.y} C ${c1} ${from.y}, ${c2} ${to.y}, ${to.x} ${to.y}`);
+        path.classList.add('connection-path');
+        if(style==='green') path.classList.add('green');
+        if(style==='red') path.classList.add('red');
+        if(style==='purple') path.classList.add('purple');
+        if(style==='red-dot') path.classList.add('red-dot');
+        svg.appendChild(path); canvas.appendChild(svg);
+        if(label){
+          const lbl=document.createElement('div'); lbl.className='connection-label'; lbl.textContent=label;
+          lbl.style.left=(midX-40)+'px'; lbl.style.top=(from.y-18)+'px'; canvas.appendChild(lbl);
+        }
+      }
+    }
+
+    // ---------- Inspector ----------
+    function updateNodeProperties(){
+      const box=document.getElementById('node-properties');
+      if(!selectedNode){ box.innerHTML='<p style="opacity:.7;font-size:12px">Select a node to edit</p>'; return; }
+      let html=`<p style="font-size:10px;opacity:.7">ID: ${selectedNode.id}</p>`;
+      if(selectedNode.type==='video'){
+        html+=`
+        <label>Title</label>
+        <input value="${selectedNode.title}" onchange="updateNodeProperty('title',this.value)"/>
+        <label>Duration (sec)</label>
+        <input type="number" value="${selectedNode.duration}" min="1" onchange="updateNodeProperty('duration',parseInt(this.value))"/>
+        <label>Asset (MP4)</label>
+        <select onchange="updateVideoAsset(this.value)">
+          <option value="">Select MP4…</option>
+          ${project.videoAssets.map(a=>`<option value="${a.id}" ${selectedNode.assetId===a.id?'selected':''}>${a.filename} • ${fmtBytes(a.size)}</option>`).join('')}
+        </select>
+        <div class="property-group" style="background:#faf5ff;margin:10px 0;border:1px solid #ede9fe">
+          <strong style="font-size:12px">Cues → Questions</strong>
+          ${selectedNode.cuePoints.map((cp,i)=>{
+            const linkOptions = project.nodes.filter(n=>n.type==='choice').map(n=>`<option value="${n.id}" ${cp.choiceNodeId===n.id?'selected':''}>${n.title}</option>`).join('');
+            return `
+            <div class="cue-item" style="display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap">
+              <label class="tiny" style="min-width:40px">Time</label>
+              <input type="number" value="${cp.tSeconds}" min="0" style="width:90px" onchange="updateCuePoint(${i},'tSeconds',parseFloat(this.value))"/>
+              <label class="tiny" style="min-width:70px">Question</label>
+              <select style="flex:1;min-width:160px" onchange="updateCuePoint(${i},'choiceNodeId',this.value)">
+                <option value="">Link to question…</option>${linkOptions}
+              </select>
+              <button class="tool-btn" onclick="removeCuePoint(${i})">Remove</button>
+            </div>`;
+          }).join('')}
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="tool-btn" style="flex:1" onclick="addCuePoint()">+ Add Cue</button>
+            <button class="tool-btn" style="flex:1" onclick="createChoiceAtCue()">Create Question at Last Cue</button>
+          </div>
+        </div>`;
+      } else if(selectedNode.type==='choice'){
+        html+=`
+        <label>Title</label>
+        <input value="${selectedNode.title}" onchange="updateNodeProperty('title',this.value)"/>
+        <label>Question (long form)</label>
+        <textarea rows="4" onchange="updateNodeProperty('question',this.value)">${selectedNode.question}</textarea>
+        <div style="margin:8px 0">
+          <label>Attach JPEG(s) to this Question</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <select id="image-attach-select" style="flex:1">
+              <option value="">Select JPEG…</option>
+              ${project.imageAssets.map(a=>`<option value="${a.id}">${a.filename} • ${fmtBytes(a.size)}</option>`).join('')}
+            </select>
+            <button class="tool-btn" onclick="attachSelectedImage()">Attach</button>
+          </div>
+          <div class="chips" id="attached-images">
+            ${selectedNode.images.map(id=>{
+              const img=project.imageAssets.find(a=>a.id===id);
+              if(!img) return '';
+              return `<span class="chip">🖼️ ${img.filename} <a href="#" onclick="removeAttachedImage('${id}');return false;" style="margin-left:6px;color:#ef4444">✖</a></span>`;
+            }).join('')}
+          </div>
+        </div>
+        <div style="margin-top:8px">
+          ${selectedNode.options.map((o,i)=>{
+            const edge=project.edges.find(e=>e.viaOptionId===o.id);
+            const targetId=edge?edge.toNodeId:'';
+            const cons = o.consequenceVideoId ? (project.nodes.find(n=>n.id===o.consequenceVideoId)?.title || '(missing)') : '(none)';
+            const nextNodeOptions = project.nodes.filter(n=>n.id!==selectedNode.id).map(n=>`<option value="${n.id}" ${targetId===n.id?'selected':''}>${n.title} ${n.type==='end'?'(End)':''}</option>`).join('');
+            return `
+            <div style="background:var(--panel);border:1px solid var(--border);padding:10px;border-radius:8px;margin:8px 0">
+              <label>Option label</label>
+              <input value="${o.label}" onchange="updateChoiceOption(${i},'label',this.value)"/>
+
+              <!-- Fixed order: Yaw/Pitch first, then Correct (no overlap) -->
+              <div class="inline-form" style="display:flex;gap:10px;margin-top:8px;align-items:center;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:6px"><span class="tiny">Yaw</span><input type="number" step="1" value="${o.spatial.yaw}" style="width:90px" onchange="updateChoiceOption(${i},'yaw',parseFloat(this.value))" placeholder="Yaw"/></div>
+                <div style="display:flex;align-items:center;gap:6px"><span class="tiny">Pitch</span><input type="number" step="1" value="${o.spatial.pitch}" style="width:90px" onchange="updateChoiceOption(${i},'pitch',parseFloat(this.value))" placeholder="Pitch"/></div>
+                <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" ${o.isCorrect?'checked':''} onchange="toggleCorrect(${i},this.checked)"/> Correct</label>
+                <button class="tool-btn" onclick="removeChoiceOption(${i})">Remove</button>
+              </div>
+
+              ${o.isCorrect
+                ? `<div style="margin-top:8px">
+                    <label>Next node (for correct)</label>
+                    <select onchange="setCorrectOptionTarget(${i}, this.value)">
+                      <option value="">— select next node —</option>
+                      ${nextNodeOptions}
+                    </select>
+                    <div class="tiny" style="margin-top:6px;opacity:.85">${targetId?`✔ Proceeds to: ${project.nodes.find(n=>n.id===targetId)?.title||'(missing)'}`:`⚠️ Not connected — pick a next node`}</div>
+                  </div>`
+                : `<div style="margin-top:8px">
+                    <label>Consequence Video (for incorrect)</label>
+                    <select onchange="updateChoiceOption(${i},'consequenceVideoId',this.value)">
+                      <option value="">— none —</option>
+                      ${project.nodes.filter(n=>n.type==='video').map(v=>`<option value="${v.id}" ${o.consequenceVideoId===v.id?'selected':''}>${v.title}</option>`).join('')}
+                    </select>
+                    <div class="tiny" style="margin-top:6px;opacity:.85">✖ Plays consequence: ${cons} then returns here</div>
+                  </div>`
+              }
+            </div>`;
+          }).join('')}
+          <button class="tool-btn" style="width:100%;margin-top:6px" onclick="addChoiceOption()">+ Add Option</button>
+        </div>`;
+      } else {
+        html+=`
+        <label>Title</label>
+        <input value="${selectedNode.title}" onchange="updateNodeProperty('title',this.value)"/>
+        <label>Outcome Tag</label>
+        <input value="${selectedNode.outcomeTag||''}" onchange="updateNodeProperty('outcomeTag',this.value)"/>`;
+      }
+      html += `<div style="display:flex;gap:8px;margin-top:10px"><button class="tool-btn" onclick="deleteSelectedNode()">Delete Node</button></div>`;
+      box.innerHTML=html;
+    }
+
+    function attachSelectedImage(){
+      if(!selectedNode || selectedNode.type!=='choice') return;
+      const sel=document.getElementById('image-attach-select'); const id=sel.value;
+      if(!id) return;
+      if(!selectedNode.images.includes(id)) selectedNode.images.push(id);
+      updateNodeProperties(); updateNodeElement(selectedNode);
+    }
+    function removeAttachedImage(id){
+      if(!selectedNode || selectedNode.type!=='choice') return;
+      selectedNode.images = selectedNode.images.filter(x=>x!==id);
+      updateNodeProperties(); updateNodeElement(selectedNode);
+    }
+
+    function updateNodeProperty(prop,val){ if(!selectedNode) return; selectedNode[prop]=val; updateNodeElement(selectedNode); updateNodeList(); }
+
+    function updateVideoAsset(assetId){
+      if(!selectedNode || selectedNode.type!=='video') return;
+      selectedNode.assetId = assetId || null;
+      if(assetId){ ensureVideoThumbnail(assetId).then(()=>updateNodeElement(selectedNode)); }
+      updateNodeElement(selectedNode); updateNodeList();
+    }
+
+    function addCuePoint(){
+      if(!selectedNode || selectedNode.type!=='video') return;
+      const t = Math.min(Math.max(0,(selectedNode.cuePoints.at(-1)?.tSeconds||0)+5), Math.max(1,selectedNode.duration-1));
+      selectedNode.cuePoints.push({id:generateId('cue'),tSeconds:t,choiceNodeId:null}); selectedNode.cuePoints.sort((a,b)=>a.tSeconds-b.tSeconds);
+      updateNodeProperties(); updateNodeElement(selectedNode);
+    }
+    function removeCuePoint(i){ if(!selectedNode||selectedNode.type!=='video')return; selectedNode.cuePoints.splice(i,1); updateNodeProperties(); updateNodeElement(selectedNode); }
+    function updateCuePoint(i,prop,val){
+      if(!selectedNode||selectedNode.type!=='video')return;
+      const cp=selectedNode.cuePoints[i]; if(!cp) return;
+      cp[prop]=(prop==='tSeconds'?Number(val):val)||null;
+      if(prop==='tSeconds'){
+        if(cp.tSeconds<0) cp.tSeconds=0;
+        if(cp.tSeconds>selectedNode.duration) cp.tSeconds=selectedNode.duration;
+        selectedNode.cuePoints.sort((a,b)=>a.tSeconds-b.tSeconds);
+      }
+      updateNodeElement(selectedNode);
+      if(prop==='choiceNodeId') updateNodeProperties();
+    }
+    function createChoiceAtCue(){
+      if(!selectedNode || selectedNode.type!=='video') return;
+      const t = Math.min( Math.max(5, selectedNode.duration-5), selectedNode.duration );
+      const choice = addChoiceNode(selectedNode.x+300,selectedNode.y,"New Question");
+      selectedNode.cuePoints.push({id:generateId('cue'),tSeconds:t,choiceNodeId:choice.id});
+      selectedNode.cuePoints.sort((a,b)=>a.tSeconds-b.tSeconds);
+      updateNodeElement(selectedNode); updateNodeProperties(); updateDisplay();
+      alert(`Created question "${choice.title}" at ${t}s and linked it.`);
+    }
+
+    function updateChoiceOption(i,prop,val){
+      if(!selectedNode || !selectedNode.options?.[i]) return;
+      if(prop==='yaw'||prop==='pitch') selectedNode.options[i].spatial[prop]=val;
+      else if(prop==='consequenceVideoId') selectedNode.options[i].consequenceVideoId=val||null;
+      else selectedNode.options[i][prop]=val;
+      updateNodeElement(selectedNode); updateConnections(); updateNodeProperties();
+    }
+    function toggleCorrect(i,checked){
+      if(!selectedNode?.options) return;
+      selectedNode.options[i].isCorrect = !!checked;
+      // remove any existing edge for this option when toggled off
+      if(!checked){
+        const optId = selectedNode.options[i].id;
+        project.edges = project.edges.filter(e=>e.viaOptionId!==optId);
+      }
+      updateNodeProperties(); updateNodeElement(selectedNode); updateConnections();
+    }
+    function setCorrectOptionTarget(i,toNodeId){
+      if(!selectedNode?.options?.[i]) return;
+      const optId = selectedNode.options[i].id;
+      // keep only one edge for this option
+      project.edges = project.edges.filter(e=>e.viaOptionId!==optId);
+      if(toNodeId) project.edges.push({id:generateId('edge'), fromNodeId:selectedNode.id, toNodeId, viaOptionId:optId});
+      updateConnections(); updateNodeElement(selectedNode); updateNodeProperties();
+    }
+    function addChoiceOption(){
+      if(!selectedNode?.options) return;
+      selectedNode.options.push({id:generateId('option'),label:'New Option',isCorrect:false,consequenceVideoId:null,spatial:{yaw:0,pitch:0}});
+      updateNodeProperties(); updateNodeElement(selectedNode);
+    }
+    function removeChoiceOption(i){
+      if(!selectedNode?.options) return;
+      const optId=selectedNode.options[i].id;
+      project.edges = project.edges.filter(e=>e.viaOptionId!==optId);
+      selectedNode.options.splice(i,1); updateNodeProperties(); updateNodeElement(selectedNode); updateConnections();
+    }
+
+    // ---------- Lists & Selections ----------
+    function updateAllLists(){ updateNodeList(); updateStartNodeSelect(); updateAssetLists(); }
+    function updateNodeList(){
+      const box=document.getElementById('node-list');
+      box.innerHTML=project.nodes.map(n=>`
+        <div class="node-list-item ${selectedNode&&selectedNode.id===n.id?'selected':''}" onclick="selectNodeById('${n.id}')">
+          ${n.type==='video'?'🎥':n.type==='choice'?'❓':'🏁'} ${n.title}
+          ${project.startNodeId===n.id?'<span class="badge" style="margin-left:6px">START</span>':''}
+          <div style="font-size:10px;opacity:.6">${n.id.slice(0,12)}…</div>
+        </div>`).join('');
+    }
+    function selectNodeById(id){
+      const el=document.querySelector(`[data-node-id="${id}"]`); if(el) el.click();
+    }
+    function updateStartNodeSelect(){
+      const sel=document.getElementById('start-node-select');
+      sel.innerHTML='<option value="">Select start node…</option>'+project.nodes.map(n=>`<option value="${n.id}" ${project.startNodeId===n.id?'selected':''}>${n.title} ${n.type==='video'?'(🎥)':''}</option>`).join('');
+      project.nodes.forEach(updateNodeElement);
+    }
+    function updateStartNode(id){ project.startNodeId = id||null; updateStartNodeSelect(); }
+    function updateProjectTitle(t){ project.title=t; }
+
+    // ---------- Assets ----------
+    function handleVideoFiles(fileList){
+      const files=[...fileList];
+      let added=0, skipped=0;
+      const genThumbs=[];
+      files.forEach(file=>{
+        if(file.type!=='video/mp4' && !file.name.toLowerCase().endsWith('.mp4')){ skipped++; return; }
+        const safe=sanitizeFilename(file.name);
+        const filename = ensureUniqueFilename(safe, 'video');
+        if(project.videoAssets.find(a=>a.filename===filename && a.size===file.size)){ skipped++; return; }
+        const objURL = URL.createObjectURL(file);
+        const asset={id:generateId('assetv'), filename, mime:'video/mp4', size:file.size, file, objectURL:objURL, thumbnail:null};
+        project.videoAssets.push(asset);
+        genThumbs.push(ensureVideoThumbnail(asset.id));
+        added++;
+      });
+      Promise.allSettled(genThumbs).then(()=>{ project.nodes.filter(n=>n.type==='video').forEach(updateNodeElement); });
+      updateAssetLists();
+      if(added||skipped) alert(`Videos added: ${added}${skipped?` | skipped: ${skipped}`:''}`);
+    }
+    function handleImageFiles(fileList){
+      const files=[...fileList];
+      let added=0, skipped=0;
+      files.forEach(file=>{
+        const okType = file.type==='image/jpeg' || /\.jpe?g$/i.test(file.name);
+        if(!okType){ skipped++; return; }
+        const base = sanitizeFilename(file.name).replace(/\.[^.]+$/,'') + '.jpg';
+        const filename = ensureUniqueFilename(base, 'image');
+        if(project.imageAssets.find(a=>a.filename===filename && a.size===file.size)){ skipped++; return; }
+        const objURL = URL.createObjectURL(file);
+        project.imageAssets.push({id:generateId('asseti'), filename, mime:'image/jpeg', size:file.size, file, objectURL:objURL});
+        added++;
+      });
+      updateAssetLists();
+      if(added||skipped) alert(`JPEGs added: ${added}${skipped?` | skipped: ${skipped}`:''}`);
+    }
+    function ensureUniqueFilename(base, kind){
+      let name=base, i=1, arr = kind==='video'?project.videoAssets:project.imageAssets;
+      while(arr.some(a=>a.filename===name)){
+        const dot=name.lastIndexOf('.');
+        const stem = dot>0?name.slice(0,dot):name;
+        const ext = dot>0?name.slice(dot):'';
+        name = `${stem}_${i}${ext}`; i++;
+      }
+      return name;
+    }
+    async function ensureVideoThumbnail(assetId){
+      const asset = project.videoAssets.find(a=>a.id===assetId);
+      if(!asset || asset.thumbnail || !asset.objectURL) return;
+      try{
+        asset.thumbnail = await captureVideoFrame(asset.objectURL);
+      }catch(e){
+        console.warn('Thumbnail capture failed:', e);
+      }
+    }
+    function captureVideoFrame(src){
+      return new Promise((resolve,reject)=>{
+        const v=document.createElement('video');
+        v.preload='metadata'; v.src=src; v.crossOrigin='anonymous'; v.muted=true;
+        v.addEventListener('loadeddata',()=>{
+          // Seek a tiny bit in to avoid black frames
+          const snap = ()=> {
+            try{
+              const w=v.videoWidth||640, h=v.videoHeight||360;
+              const c=document.createElement('canvas'); c.width=w; c.height=h;
+              const ctx=c.getContext('2d'); ctx.drawImage(v,0,0,w,h);
+              resolve(c.toDataURL('image/jpeg',0.65)); v.pause(); v.src=''; v.load();
+            }catch(err){ reject(err); }
+          };
+          if(v.readyState>=2){
+            try{
+              v.currentTime = Math.min(0.2, (v.duration||1)*0.05);
+              v.addEventListener('seeked', snap, {once:true});
+            }catch{ snap(); }
+          } else {
+            snap();
+          }
+        },{once:true});
+        v.addEventListener('error',()=>reject(new Error('video load error')));
+      });
+    }
+
+    function updateAssetLists(){
+      const vbox=document.getElementById('asset-list-video');
+      const ibox=document.getElementById('asset-list-image');
+      if(!project.videoAssets.length){ vbox.innerHTML='<div style="opacity:.8;font-size:12px">No MP4s added yet.</div>'; }
+      else vbox.innerHTML=project.videoAssets.map(a=>`
+        <div class="asset-row"><div>${a.filename}</div><div>${fmtBytes(a.size)}</div></div>`).join('');
+      if(!project.imageAssets.length){ ibox.innerHTML='<div style="opacity:.8;font-size:12px">No JPEGs added yet.</div>'; }
+      else ibox.innerHTML=project.imageAssets.map(a=>`
+        <div class="asset-row"><div>${a.filename}</div><div>${fmtBytes(a.size)}</div></div>`).join('');
+    }
+
+    // ---------- Validation ----------
+    function validateProject(){
+      const errors=[];
+      if(!project.startNodeId){
+        errors.push({type:'missing_start',message:'No start node selected',action:'Choose a start node in Project'});
+      } else {
+        const sn = project.nodes.find(n=>n.id===project.startNodeId);
+        if(!sn) errors.push({type:'invalid_start',message:'Start node does not exist',action:'Select a valid start node'});
+        else if(sn.type!=='video') errors.push({type:'start_not_video',message:'Start node must be a Video node',action:'Set start node to a Video'});
+      }
+
+      // Reachability (include consequences)
+      if(project.startNodeId){
+        const reachable=new Set(), q=[project.startNodeId];
+        while(q.length){
+          const id=q.shift(); if(reachable.has(id)) continue; reachable.add(id);
+          project.edges.filter(e=>e.fromNodeId===id).forEach(e=>{ if(!reachable.has(e.toNodeId)) q.push(e.toNodeId); });
+          const node=project.nodes.find(n=>n.id===id);
+          if(node?.type==='video') node.cuePoints.forEach(c=>{ if(c.choiceNodeId && !reachable.has(c.choiceNodeId)) q.push(c.choiceNodeId); });
+          if(node?.type==='choice'){
+            node.options.forEach(o=>{
+              if(!o.isCorrect && o.consequenceVideoId && !reachable.has(o.consequenceVideoId)) q.push(o.consequenceVideoId);
+            });
+          }
+        }
+        project.nodes.forEach(n=>{ if(!reachable.has(n.id)) errors.push({type:'unreachable',message:`Node "${n.title}" is unreachable from start`,nodeId:n.id,action:'Connect it into the flow'}); });
+      }
+
+      // Video checks
+      project.nodes.filter(n=>n.type==='video').forEach(n=>{
+        if(!n.cuePoints.length) errors.push({type:'video_no_cues',message:`Video "${n.title}" has no cue points`,nodeId:n.id,action:'Add and link cues'});
+        n.cuePoints.forEach(c=>{
+          if(c.tSeconds>n.duration) errors.push({type:'cue_after_duration',message:`Cue at ${c.tSeconds}s exceeds duration ${n.duration}s in "${n.title}"`,nodeId:n.id,action:'Adjust cue time or duration'});
+          if(c.choiceNodeId){
+            const ok=project.nodes.some(nn=>nn.id===c.choiceNodeId && nn.type==='choice');
+            if(!ok) errors.push({type:'cue_bad_choice',message:`Cue in "${n.title}" links to missing question`,nodeId:n.id,action:'Relink to a valid question'});
+          } else {
+            errors.push({type:'cue_unlinked',message:`Cue at ${c.tSeconds}s in "${n.title}" not linked to a question`,nodeId:n.id,action:'Link this cue'});
+          }
+        });
+        if(n.assetId===null) errors.push({type:'missing_asset',message:`Video "${n.title}" has no MP4 assigned`,nodeId:n.id,action:'Assign an asset'});
+        else {
+          const a=project.videoAssets.find(a=>a.id===n.assetId);
+          if(!a) errors.push({type:'missing_asset_ref',message:`Assigned asset not found for "${n.title}"`,nodeId:n.id,action:'Reassign a valid asset'});
+          else if(a.mime!=='video/mp4') errors.push({type:'wrong_mime',message:`Asset for "${n.title}" is not video/mp4`,nodeId:n.id,action:'Use MP4'});
+        }
+      });
+
+      // Choice checks
+      project.nodes.filter(n=>n.type==='choice').forEach(n=>{
+        const correctOpts = n.options.filter(o=>o.isCorrect);
+        if(correctOpts.length===0) errors.push({type:'no_correct',message:`"${n.title}" has no correct option`,nodeId:n.id,action:'Mark at least one option as Correct and set a Next node'});
+        correctOpts.forEach(o=>{
+          const out=project.edges.filter(e=>e.viaOptionId===o.id);
+          if(out.length===0) errors.push({type:'unmapped_correct',message:`Correct option "${o.label}" in "${n.title}" has no next node`,nodeId:n.id,action:'Pick a Next node in the option'});
+          if(out.length>1) errors.push({type:'multi_option',message:`Correct option "${o.label}" in "${n.title}" connects to multiple nodes`,nodeId:n.id,action:'Keep only one connection'});
+        });
+        n.options.filter(o=>!o.isCorrect).forEach(o=>{
+          if(!o.consequenceVideoId) errors.push({type:'no_consequence',message:`Incorrect option "${o.label}" in "${n.title}" has no consequence video`,nodeId:n.id,action:'Select a consequence video'});
+          else{
+            const v=project.nodes.find(nn=>nn.id===o.consequenceVideoId);
+            if(!v || v.type!=='video') errors.push({type:'bad_consequence',message:`Consequence video missing/invalid for "${o.label}" in "${n.title}"`,nodeId:n.id,action:'Pick a valid Video node'});
+          }
+        });
+      });
+
+      // Assets must have blobs and unique names
+      const names=new Set();
+      [...project.videoAssets, ...project.imageAssets].forEach(a=>{
+        if(names.has(a.filename)) errors.push({type:'dup_filename',message:`Duplicate asset filename "${a.filename}"`,action:'Rename or remove duplicate'});
+        names.add(a.filename);
+        if(!a.file) errors.push({type:'no_blob',message:`Asset "${a.filename}" has no file data (blob)`,action:'Re-add the file'});
+      });
+
+      return errors;
+    }
+
+    function showValidationErrors(errors){
+      const modal=document.getElementById('validationModal');
+      const box=document.getElementById('validation-errors');
+      box.innerHTML = errors.map(e=>`
+        <div class="validation-error">
+          <strong>${e.message}</strong>
+          <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+            <em>${e.action||''}</em>
+            ${e.nodeId?`<button class="tool-btn" onclick="goToNode('${e.nodeId}'); closeValidationModal()">Go to Node</button>`:''}
+          </div>
+        </div>`).join('');
+      modal.style.display='flex';
+    }
+    function closeValidationModal(){ document.getElementById('validationModal').style.display='none'; }
+    function goToNode(id){ selectNodeById(id); const el=document.querySelector(`[data-node-id="${id}"]`); if(el) el.scrollIntoView({behavior:'smooth',block:'center',inline:'center'}); }
+
+    // ---------- Save / Load ----------
+    function saveProject(){
+      const safeVideos = project.videoAssets.map(a=>({id:a.id,filename:a.filename,mime:a.mime,size:a.size}));
+      const safeImages = project.imageAssets.map(a=>({id:a.id,filename:a.filename,mime:a.mime,size:a.size}));
+      const toSave = JSON.stringify({...project, videoAssets:safeVideos, imageAssets:safeImages}, null, 2);
+      const blob=new Blob([toSave],{type:'application/json'});
+      const url=URL.createObjectURL(blob); const a=document.createElement('a');
+      a.href=url; a.download=`${project.title.replace(/[^a-z0-9]/gi,'_')}.flow`; a.click();
+      localStorage.setItem('scenario_project', toSave);
+      alert('Project saved. Note: files themselves are not embedded in .flow.');
+    }
+    function loadProject(){ document.getElementById('project-loader').click(); }
+    function handleProjectLoad(ev){
+      const file=ev.target.files[0]; if(!file) return;
+      const rdr=new FileReader();
+      rdr.onload=()=>{
+        try{
+          const loaded=JSON.parse(rdr.result);
+          if(!loaded.nodes||!loaded.edges||!loaded.videoAssets||!loaded.imageAssets) throw new Error('Invalid .flow format');
+          document.querySelectorAll('.flow-node').forEach(el=>el.remove());
+          const newVideos = loaded.videoAssets.map(a=>{
+            const existing=project.videoAssets.find(x=>x.filename===a.filename && x.size===a.size);
+            return existing ? existing : {...a, file:null, objectURL:null, thumbnail:null};
+          });
+          const newImages = loaded.imageAssets.map(a=>{
+            const existing=project.imageAssets.find(x=>x.filename===a.filename && x.size===a.size);
+            return existing ? existing : {...a, file:null, objectURL:null};
+          });
+          project={...loaded, videoAssets:newVideos, imageAssets:newImages};
+          project.nodes.forEach(n=>createNodeElement(n));
+          document.getElementById('project-title').value=project.title;
+          selectedNode=null; updateDisplay(); updateNodeProperties();
+          alert(`Loaded "${project.title}". Re-add files if any show as missing.`);
+        }catch(err){ alert('Load failed: '+err.message); }
+      };
+      rdr.readAsText(file);
+    }
+
+    // ---------- Export (ZIP with videos + JPEGs) ----------
+    async function validateAndExport(){
+      const errs=validateProject();
+      if(errs.length){ showValidationErrors(errs); return; }
+      await exportProjectZip();
+    }
+
+    async function exportProjectZip(){
+      const progressModal=document.getElementById('progressModal');
+      const progressFill=document.getElementById('progressFill');
+      const progressText=document.getElementById('progressText');
+      progressFill.style.width='0%'; progressText.textContent='Starting…'; progressModal.style.display='flex';
+
+      try{
+        const zip=new JSZip();
+
+        // Normalize nodes for export
+        const exportNodes = project.nodes.map(n=>{
+          if(n.type==='choice'){
+            return {
+              ...n,
+              options: n.options.map(o=>({
+                id:o.id,
+                label:o.label,
+                isCorrect: !!o.isCorrect,
+                consequenceVideoId: o.isCorrect ? null : (o.consequenceVideoId || null),
+                spatial: o.spatial
+              })),
+              images: n.images.slice()
+            };
+          }
+          return n;
+        });
+
+        const manifest={
+          schemaVersion: project.schemaVersion,
+          scenarioId: project.scenarioId,
+          title: project.title,
+          startNodeId: project.startNodeId,
+          nodes: exportNodes,
+          edges: project.edges,
+          videoAssets: project.videoAssets.map(a=>({id:a.id,filename:a.filename,mime:a.mime,size:a.size})),
+          imageAssets: project.imageAssets.map(a=>({id:a.id,filename:a.filename,mime:a.mime,size:a.size})),
+          buildMeta:{ts:new Date().toISOString(), app:'laerbarxr-scenario-builder@2.2'}
+        };
+
+        zip.file('manifest.json', JSON.stringify(manifest,null,2));
+
+        // Assets (STORE)
+        const assetsFolder=zip.folder('assets');
+        let idx=0, total=project.videoAssets.length+project.imageAssets.length;
+
+        for(const a of project.videoAssets){
+          if(!a.file) throw new Error(`Missing file for "${a.filename}".`);
+          assetsFolder.file(a.filename, a.file, {binary:true,compression:'STORE'});
+          idx++; const pct = Math.round((idx/Math.max(1,total))*70);
+          progressFill.style.width=pct+'%'; progressText.textContent=`Staging assets ${idx}/${total}…`;
+          await new Promise(r=>setTimeout(r,0));
+        }
+        for(const a of project.imageAssets){
+          if(!a.file) throw new Error(`Missing file for "${a.filename}".`);
+          assetsFolder.file(a.filename, a.file, {binary:true,compression:'STORE'});
+          idx++; const pct = Math.round((idx/Math.max(1,total))*70);
+          progressFill.style.width=pct+'%'; progressText.textContent=`Staging assets ${idx}/${total}…`;
+          await new Promise(r=>setTimeout(r,0));
+        }
+
+        progressText.textContent='Packaging…';
+        const blob=await zip.generateAsync({type:'blob', compression:'STORE'}, (m)=>{
+          const pct = 70 + Math.round((m.percent||0)*0.3);
+          progressFill.style.width=pct+'%'; progressText.textContent=`Packaging… ${pct}%`;
+        });
+
+        const url=URL.createObjectURL(blob); const a=document.createElement('a');
+        a.href=url; a.download=`${project.title.replace(/[^a-z0-9]/gi,'_')}_scenario.zip`; a.click();
+        document.getElementById('export-hint').textContent='✅ Exported ZIP with manifest.json (branching, consequences, author JPEGs) and assets/';
+      }catch(err){
+        alert('Export failed: '+err.message);
+      }finally{
+        progressFill.style.width='100%'; progressText.textContent='Done';
+        setTimeout(()=>{ document.getElementById('progressModal').style.display='none'; }, 500);
+      }
+    }
+
+    function debugProject(){
+      console.log('Project', project);
+      const summary={ nodes:project.nodes.length, edges:project.edges.length, videos:project.videoAssets.length, images:project.imageAssets.length, startNode:project.startNodeId, errors:validateProject().length };
+      console.log('Summary', summary);
+      alert(`Nodes: ${summary.nodes} | Edges: ${summary.edges} | Videos: ${summary.videos} | Images: ${summary.images} | Errors: ${summary.errors}`);
+    }
+
+    function updateDisplay(){ updateConnections(); updateNodeList(); updateStartNodeSelect(); updateAssetLists(); }
+
+    // ---------- Player Preview (unchanged core logic) ----------
+    let playerState = {
+      currentNodeId:null,
+      fromVideoId:null,
+      cueIndex:0,
+      awaitingChoice:false,
+      tickHandle:null
+    };
+
+    function openPlayer(){
+      const errs=validateProject();
+      if(errs.length){ showValidationErrors(errs); return; }
+      const start=project.nodes.find(n=>n.id===project.startNodeId);
+      if(!start || start.type!=='video'){ alert('Start node must be a Video.'); return; }
+      document.getElementById('playerModal').style.display='flex';
+      startPlaybackAtNode(start.id);
+    }
+    function closePlayer(){
+      const v=document.getElementById('playerVideo'); v.pause(); v.src=''; v.removeAttribute('src');
+      const ov=document.getElementById('choiceOverlay'); ov.innerHTML=''; ov.style.display='none';
+      document.getElementById('playerModal').style.display='none';
+      clearInterval(playerState.tickHandle);
+      playerState={currentNodeId:null,fromVideoId:null,cueIndex:0,awaitingChoice:false,tickHandle:null};
+    }
+
+    function startPlaybackAtNode(nodeId, preserveCueIdx=false){
+      const node=project.nodes.find(n=>n.id===nodeId);
+      document.getElementById('playerTitle').textContent = `Player — ${node.title}`;
+      const info=document.getElementById('playerInfo');
+      const video=document.getElementById('playerVideo');
+      const overlay=document.getElementById('choiceOverlay');
+      overlay.style.display='none'; overlay.innerHTML='';
+      clearInterval(playerState.tickHandle);
+      if(!preserveCueIdx) playerState.cueIndex=0;
+      playerState.currentNodeId=nodeId;
+      playerState.awaitingChoice=false;
+
+      if(node.type==='video'){
+        const asset=project.videoAssets.find(a=>a.id===node.assetId);
+        if(!asset||!asset.objectURL){ info.textContent='(Missing MP4 file — re-add in Assets)'; video.removeAttribute('src'); return; }
+        video.src = asset.objectURL; video.currentTime=0; video.play().catch(()=>{});
+        info.textContent = `Video ${asset.filename} • ${fmtBytes(asset.size)} • duration (authored): ${node.duration}s`;
+
+        playerState.tickHandle = setInterval(()=>{
+          if(playerState.awaitingChoice) return;
+          const t=video.currentTime||0;
+          const cues = node.cuePoints.slice().sort((a,b)=>a.tSeconds-b.tSeconds);
+          const nextCue = cues[playerState.cueIndex];
+          if(nextCue && t >= nextCue.tSeconds - 0.25){
+            video.pause();
+            playerState.fromVideoId = node.id;
+            presentChoice(nextCue.choiceNodeId);
+            playerState.awaitingChoice=true;
+          }
+        }, 120);
+      } else if(node.type==='choice'){
+        presentChoice(nodeId);
+      } else if(node.type==='end'){
+        video.removeAttribute('src');
+        info.textContent = `Reached END: ${node.outcomeTag||'completed'}`;
+      }
+    }
+
+    function presentChoice(choiceNodeId){
+      const choice = project.nodes.find(n=>n.id===choiceNodeId && n.type==='choice');
+      const overlay=document.getElementById('choiceOverlay'); overlay.innerHTML='';
+      const video=document.getElementById('playerVideo');
+      const info=document.getElementById('playerInfo');
+
+      if(!choice){ overlay.innerHTML='<div style="padding:8px;background:#fee2e2;border:1px solid #fecaca;border-radius:8px">Missing question node</div>'; overlay.style.display='block'; return; }
+
+      const h = document.createElement('div'); h.textContent = choice.question; h.style.fontWeight='600'; h.style.marginBottom='8px'; overlay.appendChild(h);
+
+      // Show author-attached images
+      if(choice.images?.length){
+        const row=document.createElement('div'); row.className='qa-images';
+        choice.images.forEach(id=>{
+          const imgAsset=project.imageAssets.find(a=>a.id===id);
+          if(imgAsset?.objectURL){ const im=document.createElement('img'); im.src=imgAsset.objectURL; row.appendChild(im); }
+        });
+        overlay.appendChild(row);
+      }
+
+      // Options
+      choice.options.forEach(opt=>{
+        const btn=document.createElement('div'); btn.className='choice-option'; btn.textContent=opt.label + (opt.isCorrect?' (correct path)':'');
+        btn.onclick=()=>{
+          if(opt.isCorrect){
+            const edge = project.edges.find(e=>e.fromNodeId===choice.id && e.viaOptionId===opt.id);
+            if(!edge){ alert('Correct option has no next node.'); return; }
+            overlay.style.display='none'; overlay.innerHTML='';
+            playerState.awaitingChoice=false;
+            playerState.cueIndex++; // advance to next cue on the source video
+            startPlaybackAtNode(edge.toNodeId);
+          } else {
+            const consVideoNode = project.nodes.find(n=>n.id===opt.consequenceVideoId);
+            if(!consVideoNode){ alert('This incorrect option has no consequence video set.'); return; }
+            const asset=project.videoAssets.find(a=>a.id===consVideoNode.assetId);
+            if(!asset||!asset.objectURL){ alert('Consequence video asset missing.'); return; }
+            overlay.style.display='none';
+            playerState.awaitingChoice=false;
+            info.textContent = `Consequence: ${consVideoNode.title}`;
+            video.src = asset.objectURL; video.currentTime=0;
+            video.onended = ()=>{
+              // return to same question; do not advance cueIndex
+              startPlaybackAtNode(choice.id, true);
+            };
+            video.play().catch(()=>{});
+          }
+        };
+        overlay.appendChild(btn);
+      });
+      overlay.style.display='block';
+    }
+  </script>
+</body>
+</html>
